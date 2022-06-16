@@ -2,6 +2,7 @@ import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.Objects;
 
 public class SimpleHTTPServerThread implements Runnable{
     private final Socket socket;
@@ -9,158 +10,127 @@ public class SimpleHTTPServerThread implements Runnable{
     private final AwesomeInputStream ais;
     private final PrintWriter pr;
     private final PrintWriter log;
-
-    private final File root = new File("./root");
-    private final int BUFFER_SIZE = 8*1024;
+    private final File root;
 
     public SimpleHTTPServerThread(Socket s) throws IOException {
         socket = s;
         os = socket.getOutputStream();
         ais = new AwesomeInputStream(new BufferedInputStream(socket.getInputStream()));
         pr = new PrintWriter(os);
-        log = new PrintWriter(new FileWriter("log.txt", true));
+        log = new PrintWriter(new FileWriter(Config.LOG_FILE, true));
+        root = new File(Config.ROOT_DIR);
         (new Thread(this)).start();
+    }
+
+    private String getFilePathFromRequestPath(String request) {
+        return request.split(" ")[1].replace("%20", " ");
     }
 
     @Override
     public void run() {
         try {
             String input = ais.readLine();
+
+            if (input.length() <= 0) {
+                return;
+            }
+
             System.out.println(input);
-            
-            if(input.length() > 0) {
-                if (input.startsWith("GET")) {
-                    // print first line get request to log
+            log.write(input + '\n');
+
+            if (input.startsWith("GET")) {
+                // print first line get request to log
+                String filePath = getFilePathFromRequestPath(input);
+                File file = new File(Config.ROOT_DIR + filePath);
+
+                // print rest of the get request to log
+                while (true) {
+                    input = ais.readLine();
                     log.write(input + '\n');
-                    String filePath = input.split(" ")[1].replace("%20", " ");
-                    File file = new File("./root" + filePath);
+                    if (input.equals("\r") || input.equals("")) break;
+                }
+                log.flush();
 
-                    // print rest of the get request to log
-                    while (true) {
-                        input = ais.readLine();
-                        log.write(input + '\n');
-                        if (input.equals("\r") || input.equals("")) break;
+                if (file.exists()) {
+                    if (file.isDirectory()) {
+                        respondWithHtml(prepareHTMLFromDirectory(file));
+                    } else if (file.isFile()) {
+                        respondWithFile(file);
                     }
-                    log.flush();
+                } else {
+                    respondWithNotFound();
+                }
 
-                    if (file.exists()) {
-                        if (file.isDirectory()) {
-                            writeHTML(prepareHTMLFromDirectory(file));
-                        } else if (file.isFile()) {
-                            writeFile(file);
+            } else if (input.startsWith("POST")) {
+                String filePath = getFilePathFromRequestPath(input);
+
+                String boundary = "";
+                int contentLength = 0;
+
+                while (true) {
+                    input = ais.readLine();
+                    log.write(input + '\n');
+                    if (input.equals("\r") || input.equals("")) break;
+
+                    if (input.contains("boundary")) {
+                        String [] split = input.split("boundary=");
+                        boundary = split[split.length - 1].trim();
+                    } else if (input.contains("Content-Length")) {
+                        String [] split = input.split("Content-Length: ");
+                        try {
+                            contentLength = Integer.parseInt(split[1].trim());
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                            System.out.println("Could not parse: " + split[1]);
                         }
+                    }
+                }
+                log.flush();
+
+                boundary = "--" + boundary;
+                String fileName = "";
+                int extraBytes = 0;
+
+                while (true) {
+                    input = ais.readLine();
+                    String s = input + '\n';
+                    extraBytes += s.getBytes(StandardCharsets.ISO_8859_1).length;
+                    log.write(s);
+                    if (input.equals("\r") || input.equals("")) break;
+
+                    if (input.contains("name=\"uploadedfile\"")) {
+                        fileName = input.split("filename=")[1].trim();
+                        fileName = fileName.substring(1, fileName.length() - 1);
+                        //System.out.println(fileName);
+                    }
+                }
+                if (fileName.length() > 0 && contentLength - extraBytes > 0) {
+                    File out = new File( Config.ROOT_DIR+ "/" + filePath + "/" + fileName);
+                    if (!out.createNewFile()) {
+                        System.out.println("file already exists");
+                        respondWithConflict();
                     } else {
-                        writeNotFound();
-                    }
+                        System.out.println("creating new file");
+                        FileOutputStream fos = new FileOutputStream(out);
 
-                } else if (input.startsWith("POST")) {
-                    log.write(input + '\n');
-                    String filePath = input.split(" ")[1];
-
-                    String boundary = "";
-                    int contentLength = 0;
-
-                    while (true) {
-                        input = ais.readLine();
-                        log.write(input + '\n');
-                        if (input.equals("\r") || input.equals("")) break;
-
-                        if (input.contains("boundary")) {
-                            String [] split = input.split("boundary=");
-                            boundary = split[split.length - 1].trim();
-                        } else if (input.contains("Content-Length")) {
-                            String [] split = input.split("Content-Length: ");
-                            try {
-                                contentLength = Integer.parseInt(split[1].trim());
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                                System.out.println("could not parse: " + split[1]);
-                            }
-                        }
-                    }
-                    log.flush();
-
-                    boundary = "--" + boundary;
-                    String name = "UNKNOWN", fileName = "";
-                    int extraBytes = 0;
-
-                    while (true) {
-                        input = ais.readLine();
-                        String s = (input + '\n');
+                        // delete end boundary
+                        String s = (boundary + "--\r\n\r\n");
                         extraBytes += s.getBytes(StandardCharsets.ISO_8859_1).length;
-                        log.write(input + '\n');
-                        if (input.equals("\r") || input.equals("")) break;
+                        contentLength -= extraBytes;
 
-                        if (input.contains("name=\"uploadedfile\"")) {
-                            fileName = input.split("filename=")[1].trim();
-                            fileName = fileName.substring(1, fileName.length() - 1);
-                            //System.out.println(fileName);
-                            name = "UPLOADFILE";
+                        byte[] buff = new byte[Config.BUFFER_SIZE];
+                        int read = 0;
+                        while (contentLength > 0 && ((read = ais.read(buff))) > 0) {
+                            fos.write(buff, 0, Math.min(read, contentLength));
+                            contentLength -= read;
                         }
+                        fos.flush();
+
+                        System.out.println("Done writing");
+                        respondWithHtml(prepareHTMLFromDirectory(root));
                     }
-                    if (name.equals("UPLOADFILE") && contentLength - extraBytes > 0) { // TODO : do better
-                        File out = new File("./root/" + filePath + "/" + fileName);
-                        if (out.exists()) {
-                            System.out.println("file already exists");
-
-                            String content = "HTTP/1.1 409 Conflict\r\n" +
-                                    "Server: Java HTTP Server: 1.0\r\n" +
-                                    "Date: " + new Date() + "\r\n" +
-                                    "Content-Type: text/html\r\n" +
-                                    "\r\n" +
-                                    prepareHTMLFromDirectory(new File("./root/"));
-                            pr.write(content);
-                            pr.flush();
-
-                            log.write(content);
-                            log.flush();
-
-                        } else {
-                            System.out.println("creating new file");
-                            out.createNewFile();
-                            FileOutputStream fos = new FileOutputStream(out);
-
-                            // delete end boundary
-                            String s = (boundary + "--\r\n\r\n");
-                            extraBytes += s.getBytes(StandardCharsets.ISO_8859_1).length;
-                            contentLength -= extraBytes;
-
-                            byte[] buff = new byte[BUFFER_SIZE];
-                            int read = 0;
-                            while (contentLength > 0 && ((read = ais.read(buff))) > 0) {
-                                fos.write(buff, 0, Math.min(read, contentLength));
-                                contentLength -= read;
-                            }
-                            fos.flush();
-
-                            System.out.println("done writing");
-
-                            String content = "HTTP/1.1 200 OK\r\n" +
-                                    "Server: Java HTTP Server: 1.0\r\n" +
-                                    "Date: " + new Date() + "\r\n" +
-                                    "Content-Type: text/html\r\n" +
-                                    "\r\n" +
-                                    prepareHTMLFromDirectory(new File("./root/"));
-                            pr.write(content);
-                            pr.flush();
-
-                            log.write(content);
-                            log.flush();
-                        }
-                    } else {
-                        // TODO : send nothing done response
-                        String content = "HTTP/1.1 204 No Content\r\n" +
-                                "Server: Java HTTP Server: 1.0\r\n" +
-                                "Date: " + new Date() + "\r\n" +
-                                "Content-Type: text/html\r\n" +
-                                "\r\n" +
-                                prepareHTMLFromDirectory(new File("./root/"));
-                        pr.write(content);
-                        pr.flush();
-
-                        log.write(content);
-                        log.flush();
-                    }
+                } else {
+                    respondWithNoContent();
                 }
             }
         } catch (Exception e) {
@@ -174,17 +144,29 @@ public class SimpleHTTPServerThread implements Runnable{
         }
     }
 
+    private String getRelativePathWrtRoot(File file) {
+        return root.toPath().relativize(file.toPath()).toString();
+    }
+
 
     private String prepareHTMLFromDirectory(File file) {
 
         StringBuilder sb = new StringBuilder();
 
-        for (File f : file.listFiles()) {
+        for (File f : Objects.requireNonNull(file.listFiles())) {
 
             if (f.isFile()) {
-                sb.append("<a href=/").append(root.toPath().relativize(f.toPath()).toString().replace(" ", "%20")).append(">").append(f.getName()).append("</a><br>");
+                sb.append("<a href=/")
+                        .append(getRelativePathWrtRoot(f).replace(" ", "%20"))
+                        .append(">")
+                        .append(f.getName())
+                        .append("</a><br>");
             } else if (f.isDirectory()) {
-                sb.append("<a href=/").append(root.toPath().relativize(f.toPath()).toString().replace(" ", "%20")).append("><strong>").append(f.getName()).append("</strong></a><br>");
+                sb.append("<a href=/")
+                        .append(getRelativePathWrtRoot(f).replace(" ", "%20"))
+                        .append("><strong>")
+                        .append(f.getName())
+                        .append("</strong></a><br>");
             }
         }
 
@@ -193,17 +175,17 @@ public class SimpleHTTPServerThread implements Runnable{
                 "<input type=\"submit\" value=\"Upload File\" />\n" +
                 "</form>");
 
-
         return sb.toString();
     }
 
-    private void writeHTML(String body) {
-        String content = "HTTP/1.1 200 OK\r\n" +
+    private void respondWithText(String responseCode, String body) {
+        String content = "HTTP/1.1 " + responseCode + "\r\n" +
                 "Server: Java HTTP Server: 1.0\r\n" +
                 "Date: " + new Date() + "\r\n" +
                 "Content-Type: text/html\r\n" +
                 "\r\n" +
                 body;
+
         pr.write(content);
         pr.flush();
 
@@ -211,7 +193,7 @@ public class SimpleHTTPServerThread implements Runnable{
         log.flush();
     }
 
-    private void writeFile(File file) throws IOException {
+    private void respondWithFile(File file) throws IOException {
         String content = "HTTP/1.1 200 OK\r\n" +
                 "Server: Java HTTP Server: 1.0\r\n" +
                 "Date: " + new Date() + "\r\n" +
@@ -226,7 +208,7 @@ public class SimpleHTTPServerThread implements Runnable{
 
         FileInputStream fis = new FileInputStream(file);
         int read = 0;
-        byte[] buff = new byte[BUFFER_SIZE];
+        byte[] buff = new byte[Config.BUFFER_SIZE];
 
         while ((read = fis.read(buff)) > 0) {
             os.write(buff, 0, read);
@@ -234,17 +216,19 @@ public class SimpleHTTPServerThread implements Runnable{
         }
     }
 
-    private void writeNotFound() {
-        String content = "HTTP/1.1 404 Not Found\r\n" +
-                "Server: Java HTTP Server: 1.0\r\n" +
-                "Date: " + new Date() + "\r\n" +
-                "Content-Type: text/html\r\n" +
-                "\r\n";
+    private void respondWithNoContent() {
+        respondWithText("204 No Content", prepareHTMLFromDirectory(root));
+    }
 
-        pr.write(content);
-        pr.flush();
+    private void respondWithConflict() {
+        respondWithText("409 Conflict", prepareHTMLFromDirectory(root));
+    }
 
-        log.write(content);
-        log.flush();
+    private void respondWithHtml(String html) {
+        respondWithText("200 OK", html);
+    }
+
+    private void respondWithNotFound() {
+        respondWithText("404 Not Found", "");
     }
 }

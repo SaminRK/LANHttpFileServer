@@ -2,7 +2,7 @@ import java.io.BufferedInputStream;
 import java.io.IOException;
 
 public class AwesomeInputStream {
-    private BufferedInputStream bis;
+    private final BufferedInputStream bis;
 
     public AwesomeInputStream(BufferedInputStream bis) {
         this.bis = bis;

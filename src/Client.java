@@ -11,7 +11,7 @@ public class Client {
             if (input.equalsIgnoreCase("q")) break;
 
             if (input.startsWith("upload")) {
-                String [] splits = input.split(" ");
+                String[] splits = input.split(" ");
                 if (splits.length < 2) {
                     System.out.println("please provide file name");
                     continue;
@@ -25,7 +25,7 @@ public class Client {
                 }
 
             } else if (input.startsWith("ls")) {
-                String [] splits = input.split(" ");
+                String[] splits = input.split(" ");
                 String pathName = ".";
                 if (splits.length >= 2)
                     pathName = splits[1];
