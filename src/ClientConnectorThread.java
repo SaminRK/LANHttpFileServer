@@ -5,8 +5,6 @@ import java.nio.file.Files;
 
 public class ClientConnectorThread implements Runnable{
     File file;
-    private final int SERVER_PORT = 8080;
-    private final int BUFFER_SIZE = 8*1024;
 
     public ClientConnectorThread(File file) {
         this.file = file;
@@ -16,7 +14,7 @@ public class ClientConnectorThread implements Runnable{
     @Override
     public void run() {
         try {
-            Socket socket = new Socket("localhost", SERVER_PORT);
+            Socket socket = new Socket("localhost", Config.PORT);
             System.out.println("connected");
 
             OutputStream sos = socket.getOutputStream();
@@ -44,7 +42,7 @@ public class ClientConnectorThread implements Runnable{
 
             FileInputStream fis = new FileInputStream(file);
             int read = 0;
-            byte[] buff = new byte[BUFFER_SIZE];
+            byte[] buff = new byte[Config.BUFFER_SIZE];
 
             while ((read = fis.read(buff)) >= 0) {
                 sos.write(buff, 0, read);
@@ -60,7 +58,6 @@ public class ClientConnectorThread implements Runnable{
                 System.out.println(line);
                 if (line.equals("")) break;
             }
-
 
             fis.close();
             br.close();

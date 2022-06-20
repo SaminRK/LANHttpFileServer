@@ -6,6 +6,7 @@ public class Client {
     public void run() {
         Scanner sc = new Scanner(System.in);
         String input;
+
         while (true) {
             input = sc.nextLine();
             if (input.equalsIgnoreCase("q")) break;

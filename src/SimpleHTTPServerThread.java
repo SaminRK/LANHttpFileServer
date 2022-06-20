@@ -2,7 +2,6 @@ import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
-import java.util.Objects;
 
 public class SimpleHTTPServerThread implements Runnable{
     private final Socket socket;
@@ -10,7 +9,7 @@ public class SimpleHTTPServerThread implements Runnable{
     private final AwesomeInputStream ais;
     private final PrintWriter pr;
     private final PrintWriter log;
-    private final File root;
+    private final File rootDirectory;
 
     public SimpleHTTPServerThread(Socket s) throws IOException {
         socket = s;
@@ -18,7 +17,7 @@ public class SimpleHTTPServerThread implements Runnable{
         ais = new AwesomeInputStream(new BufferedInputStream(socket.getInputStream()));
         pr = new PrintWriter(os);
         log = new PrintWriter(new FileWriter(Config.LOG_FILE, true));
-        root = new File(Config.ROOT_DIR);
+        rootDirectory = new File(Config.ROOT_DIR);
         (new Thread(this)).start();
     }
 
@@ -44,11 +43,10 @@ public class SimpleHTTPServerThread implements Runnable{
                 File file = new File(Config.ROOT_DIR + filePath);
 
                 // print rest of the get request to log
-                while (true) {
+                do {
                     input = ais.readLine();
                     log.write(input + '\n');
-                    if (input.equals("\r") || input.equals("")) break;
-                }
+                } while (!input.equals("\r") && !input.equals(""));
                 log.flush();
 
                 if (file.exists()) {
@@ -73,10 +71,10 @@ public class SimpleHTTPServerThread implements Runnable{
                     if (input.equals("\r") || input.equals("")) break;
 
                     if (input.contains("boundary")) {
-                        String [] split = input.split("boundary=");
+                        String[] split = input.split("boundary=");
                         boundary = split[split.length - 1].trim();
                     } else if (input.contains("Content-Length")) {
-                        String [] split = input.split("Content-Length: ");
+                        String[] split = input.split("Content-Length: ");
                         try {
                             contentLength = Integer.parseInt(split[1].trim());
                         } catch (Exception e) {
@@ -101,7 +99,6 @@ public class SimpleHTTPServerThread implements Runnable{
                     if (input.contains("name=\"uploadedfile\"")) {
                         fileName = input.split("filename=")[1].trim();
                         fileName = fileName.substring(1, fileName.length() - 1);
-                        //System.out.println(fileName);
                     }
                 }
                 if (fileName.length() > 0 && contentLength - extraBytes > 0) {
@@ -127,7 +124,7 @@ public class SimpleHTTPServerThread implements Runnable{
                         fos.flush();
 
                         System.out.println("Done writing");
-                        respondWithHtml(prepareHTMLFromDirectory(root));
+                        respondWithHtml(prepareHTMLFromDirectory(rootDirectory));
                     }
                 } else {
                     respondWithNoContent();
@@ -145,7 +142,7 @@ public class SimpleHTTPServerThread implements Runnable{
     }
 
     private String getRelativePathWrtRoot(File file) {
-        return root.toPath().relativize(file.toPath()).toString();
+        return rootDirectory.toPath().relativize(file.toPath()).toString();
     }
 
 
@@ -153,20 +150,16 @@ public class SimpleHTTPServerThread implements Runnable{
 
         StringBuilder sb = new StringBuilder();
 
-        for (File f : Objects.requireNonNull(file.listFiles())) {
+        for (File f : file.listFiles()) {
 
             if (f.isFile()) {
-                sb.append("<a href=/")
-                        .append(getRelativePathWrtRoot(f).replace(" ", "%20"))
-                        .append(">")
-                        .append(f.getName())
-                        .append("</a><br>");
+                sb.append("<a href=/" +
+                        getRelativePathWrtRoot(f).replace(" ", "%20") +
+                        ">" + f.getName() + "</a><br>");
             } else if (f.isDirectory()) {
-                sb.append("<a href=/")
-                        .append(getRelativePathWrtRoot(f).replace(" ", "%20"))
-                        .append("><strong>")
-                        .append(f.getName())
-                        .append("</strong></a><br>");
+                sb.append("<a href=/" +
+                        getRelativePathWrtRoot(f).replace(" ", "%20") +
+                        "><strong>" + f.getName() + "</strong></a><br>");
             }
         }
 
@@ -194,34 +187,37 @@ public class SimpleHTTPServerThread implements Runnable{
     }
 
     private void respondWithFile(File file) throws IOException {
-        String content = "HTTP/1.1 200 OK\r\n" +
-                "Server: Java HTTP Server: 1.0\r\n" +
-                "Date: " + new Date() + "\r\n" +
-                "Content-Type: application/force-download\r\n" +
-                "Content-Length: " + file.length() + "\r\n" +
-                "\r\n";
-        pr.write(content);
-        pr.flush();
+        try (FileInputStream fis = new FileInputStream(file)) {
+            String content = "HTTP/1.1 200 OK\r\n" +
+                    "Server: Java HTTP Server: 1.0\r\n" +
+                    "Date: " + new Date() + "\r\n" +
+                    "Content-Type: application/force-download\r\n" +
+                    "Content-Length: " + file.length() + "\r\n" +
+                    "\r\n";
+            pr.write(content);
+            pr.flush();
 
-        log.write(content);
-        log.flush();
+            log.write(content);
+            log.flush();
 
-        FileInputStream fis = new FileInputStream(file);
-        int read = 0;
-        byte[] buff = new byte[Config.BUFFER_SIZE];
+            int read = 0;
+            byte[] buff = new byte[Config.BUFFER_SIZE];
 
-        while ((read = fis.read(buff)) > 0) {
-            os.write(buff, 0, read);
-            os.flush();
+            while ((read = fis.read(buff)) > 0) {
+                os.write(buff, 0, read);
+                os.flush();
+            }
+        } catch (FileNotFoundException e) {
+            respondWithNoContent();
         }
     }
 
     private void respondWithNoContent() {
-        respondWithText("204 No Content", prepareHTMLFromDirectory(root));
+        respondWithText("204 No Content", prepareHTMLFromDirectory(rootDirectory));
     }
 
     private void respondWithConflict() {
-        respondWithText("409 Conflict", prepareHTMLFromDirectory(root));
+        respondWithText("409 Conflict", prepareHTMLFromDirectory(rootDirectory));
     }
 
     private void respondWithHtml(String html) {

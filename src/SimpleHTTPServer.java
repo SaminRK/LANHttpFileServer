@@ -12,7 +12,6 @@ public class SimpleHTTPServer {
     }
 
     public void run() throws IOException {
-
         while (true) {
             Socket s = ss.accept();
             new SimpleHTTPServerThread(s);
@@ -20,6 +19,11 @@ public class SimpleHTTPServer {
     }
 
     public static void main(String[] args) throws IOException {
+        File rootDirectory = new File(Config.ROOT_DIR);
+        if (!rootDirectory.exists()) {
+            rootDirectory.mkdir();
+        }
+
         SimpleHTTPServer server = new SimpleHTTPServer();
         server.run();
     }
